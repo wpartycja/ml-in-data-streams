@@ -1,3 +1,4 @@
+"""Generates a stream of data with changing feature importances."""
 from river import datasets
 from scipy.special import expit
 import numpy as np
@@ -55,6 +56,7 @@ class FeatureImportanceChangeGenerator(datasets.base.SyntheticDataset):
             yield x, y
 
     def change_weights(self):
+        """Change the weights of the features."""
         self.weights = np.diagonal(self.weights_generator.normal(0, 1, size=(self.n_features,1))@ \
                                    self.weights_generator.normal(10, 5, size=(1, self.n_features)))
         self.important_features = self.change_interval_generator.choice( \
@@ -65,4 +67,3 @@ class FeatureImportanceChangeGenerator(datasets.base.SyntheticDataset):
         mask[self.important_features] = 1
         self.weights = mask * self.weights
         self.importance_history[self.iter] = (self.important_features, self.weights)
-        return
