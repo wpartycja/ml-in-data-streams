@@ -38,6 +38,7 @@ class FeatureImportanceChangeGenerator(datasets.base.SyntheticDataset):
         self.iters_left_to_change = 0
         self.weights = None
         self.important_features = None
+        self.random_seed = random_seed
 
     def __iter__(self):
         while True:
