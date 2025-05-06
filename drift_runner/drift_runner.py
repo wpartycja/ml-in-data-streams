@@ -1,15 +1,19 @@
-from feature_selection import run_Boruta
+from feature_selection.boruta import run_Boruta
 import numpy as np
 import pandas as pd
 from drift_runner.plots import plot_accuracy_with_drift
 from river import tree, metrics
 from collections import deque
 from drift_runner.drift_strategies import *
+from feature_selection.alpha_investing import AlphaInvestingSelector
+
 
 class DriftDetectionRunner:
-    def __init__(self, generator, drift_detector, boruta_samples=100, n_samples=10000, n_history=1000, print_warning=False, plot_path=None):
+    def __init__(self, generator, drift_detector,  feature_selector='boruta', boruta_samples=100, n_samples=10000, n_history=1000, print_warning=False, plot_path=None):
         self.generator = generator
         self.drift_detector = drift_detector
+        self.feature_selector_type = feature_selector
+        self.alpha_selector = AlphaInvestingSelector() if feature_selector == 'alpha' else None
         self.boruta_samples = boruta_samples
         self.n_samples = n_samples
         self.n_history = n_history
@@ -34,9 +38,9 @@ class DriftDetectionRunner:
             self.previous_ys.append(y)
 
     def get_features(self, x):
-        return x if self.accepted_features is None else {
-            k: v for k, v in x.items() if k in self.accepted_features
-        }
+        if not self.accepted_features:
+            return x  # fallback to all features
+        return {k: v for k, v in x.items() if k in self.accepted_features}
         
     def _update_metrics(self, x, y, epoch):
         y_pred = self.model.predict_one(x)
@@ -65,11 +69,20 @@ class DriftDetectionRunner:
         return drift_detected
 
 
-    def _get_new_boruta_features(self):
+    def _get_new_features(self):
         df_x = pd.DataFrame(self.previous_xs)
         arr_y = np.array(self.previous_ys)
-        boruta_result = run_Boruta(df_x, arr_y)
-        return list(boruta_result.accepted) + list(boruta_result.tentative)
+
+        if self.feature_selector_type == 'boruta':
+            boruta_result = run_Boruta(df_x, arr_y)
+            return list(boruta_result.accepted) + list(boruta_result.tentative)
+
+        elif self.feature_selector_type == 'alpha':
+            self.alpha_selector.update(df_x, arr_y)
+            return self.alpha_selector.get_selected_features()
+
+        else:
+            raise ValueError(f"Unknown feature selector type: {self.feature_selector_type}")
 
     def _run(self):
         for epoch, (x, y) in enumerate(self.generator.take(self.n_samples - self.boruta_samples)):
@@ -84,7 +97,7 @@ class DriftDetectionRunner:
 
             # Optional: track feature stability for mode D @TODO ????????????????????
             elif self.accepted_features is not None and epoch % self.n_history == 0:
-                new_features = self._get_new_boruta_features()
+                new_features = self._get_new_features()
                 if len(set(self.accepted_features).difference(new_features)) > len(self.accepted_features) / 2:
                     print(f"Feature importance changed at epoch {epoch}.")
                     self.accepted_features = new_features
@@ -117,6 +130,7 @@ class DriftDetectionRunner:
             'all_features_with_reset': all_features_with_reset,
             'boruta_initial_only': boruta_initial_only,
             'boruta_dynamic': boruta_dynamic,
+            'alpha_dynamic': alpha_dynamic
         }
 
         if mode not in mode_decorators:

@@ -1,4 +1,5 @@
 from matplotlib import pyplot as plt
+import os
 
 
 def plot_accuracy_with_drift(
@@ -36,6 +37,7 @@ def plot_accuracy_with_drift(
     
     
     if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path)
         print(f"Plot saved to {save_path}")
         

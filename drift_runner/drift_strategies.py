@@ -27,7 +27,7 @@ def all_features_with_reset(func):
 def boruta_initial_only(func):
     """Fixed Boruta features, reset model on drift"""
     def wrapper(self, *args, **kwargs):
-        self.accepted_features = self._get_new_boruta_features()
+        self.accepted_features = self._get_new_features()
         def reset_model(epoch):
             print(f"Drift detected at epoch {epoch} → resetting model")
             self.model = tree.HoeffdingTreeClassifier()
@@ -40,14 +40,31 @@ def boruta_initial_only(func):
 def boruta_dynamic(func):
     """Boruta features, update features + model on drift"""
     def wrapper(self, *args, **kwargs):
-        self.accepted_features = self._get_new_boruta_features()
+        self.accepted_features = self._get_new_features()
 
         def reset_and_update(epoch):
             print(f"Drift detected at epoch {epoch} → updating features and resetting model")
-            self.accepted_features = self._get_new_boruta_features()
+            self.accepted_features = self._get_new_features()
             self.model = tree.HoeffdingTreeClassifier()
             self.detected_drift_points.append(epoch)
 
         self.handle_drift = reset_and_update
+        return func(self, *args, **kwargs)
+    return wrapper
+
+
+def alpha_dynamic(func):
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        self.accepted_features = self._get_new_features()
+
+        def reset_model(epoch):
+            print(f"Drift detected at epoch {epoch} → resetting model (Alpha mode)")
+            self.model = tree.HoeffdingTreeClassifier()
+            self.detected_drift_points.append(epoch)
+            # Update alpha-selected features again after reset
+            self.accepted_features = self._get_new_features()
+
+        self.handle_drift = reset_model
         return func(self, *args, **kwargs)
     return wrapper
