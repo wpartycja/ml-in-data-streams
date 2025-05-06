@@ -2,7 +2,7 @@ from matplotlib import pyplot as plt
 
 
 def plot_accuracy_with_drift(
-    epochs, accuracies, real_drift_points, detected_drift_points, regular_change_points
+    epochs, accuracies, real_drift_points, detected_drift_points, regular_change_points, save_path=None
 ):
     plt.figure(figsize=(10, 5))
     plt.plot(epochs, accuracies, label="Accuracy", color="blue")
@@ -33,4 +33,11 @@ def plot_accuracy_with_drift(
     plt.ylabel("Accuracy")
     plt.title("Accuracy Over Time with Drift Detection")
     plt.legend()
+    
+    
+    if save_path:
+        plt.savefig(save_path)
+        print(f"Plot saved to {save_path}")
+        
     plt.show()
+    plt.close()
