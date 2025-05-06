@@ -1,4 +1,5 @@
 """Generates a stream of data with changing feature importances."""
+
 from river import datasets
 from scipy.special import expit
 import numpy as np
@@ -21,20 +22,30 @@ class FeatureImportanceChangeGenerator(datasets.base.SyntheticDataset):
         random_seed: int, random seed for reproducibility
     """
 
-    def __init__(self, n_features: int, n_important_features: int, feature_drift_proba: float = 0, importance_change_interval: int = 3, random_seed: int = 2137):
-        super().__init__(task=datasets.base.BINARY_CLF,
-                         n_features=n_features,
-                         n_classes=2,
-                         n_outputs=1)
+    def __init__(
+        self,
+        n_features: int,
+        n_important_features: int,
+        feature_drift_proba: float = 0,
+        importance_change_interval: int = 3,
+        random_seed: int = 2137,
+    ):
+        super().__init__(
+            task=datasets.base.BINARY_CLF,
+            n_features=n_features,
+            n_classes=2,
+            n_outputs=1,
+        )
         self.importance_change_interval = importance_change_interval
         self.n_important_features = n_important_features
         self.feature_drift_proba = feature_drift_proba
         self.change_interval_generator = np.random.default_rng(random_seed)
         self.iter = 0
         self.importance_history = {}
-        self.feature_generators = [np.random.default_rng(random_seed + i) \
-                                   for i in range(n_features)]
-        self.weights_generator = np.random.default_rng(random_seed*2)
+        self.feature_generators = [
+            np.random.default_rng(random_seed + i) for i in range(n_features)
+        ]
+        self.weights_generator = np.random.default_rng(random_seed * 2)
         self.iters_left_to_change = 0
         self.weights = None
         self.important_features = None
@@ -45,12 +56,12 @@ class FeatureImportanceChangeGenerator(datasets.base.SyntheticDataset):
             self.iter += 1
             if self.iters_left_to_change == 0:
                 self.change_weights()
-                self.iters_left_to_change = \
-                self.change_interval_generator.poisson(self.importance_change_interval)*100 \
-                + np.round(self.change_interval_generator.normal(20, 50))
+                self.iters_left_to_change = self.change_interval_generator.poisson(
+                    self.importance_change_interval
+                ) * 100 + np.round(self.change_interval_generator.normal(20, 50))
 
             features = [gen.normal(0, 1) for gen in self.feature_generators]
-            x = dict(zip([f'var_{i}' for i in range(self.n_features)], features))
+            x = dict(zip([f"var_{i}" for i in range(self.n_features)], features))
             probas = expit(features @ self.weights)
             y = self.change_interval_generator.binomial(1, probas)
             self.iters_left_to_change -= 1
@@ -58,11 +69,13 @@ class FeatureImportanceChangeGenerator(datasets.base.SyntheticDataset):
 
     def change_weights(self):
         """Change the weights of the features."""
-        self.weights = np.diagonal(self.weights_generator.normal(0, 1, size=(self.n_features,1))@ \
-                                   self.weights_generator.normal(10, 5, size=(1, self.n_features)))
-        self.important_features = self.change_interval_generator.choice( \
-            self.n_features, self.n_important_features, replace=False \
-            )
+        self.weights = np.diagonal(
+            self.weights_generator.normal(0, 1, size=(self.n_features, 1))
+            @ self.weights_generator.normal(10, 5, size=(1, self.n_features))
+        )
+        self.important_features = self.change_interval_generator.choice(
+            self.n_features, self.n_important_features, replace=False
+        )
         self.important_features.sort()
         mask = np.zeros_like(self.weights)
         mask[self.important_features] = 1
