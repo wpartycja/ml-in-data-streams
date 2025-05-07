@@ -1,15 +1,16 @@
 from feature_selection.boruta import run_Boruta
 import numpy as np
 import pandas as pd
-from drift_runner.plots import plot_accuracy_with_drift
+from drift_runner.utils import plot_accuracy_with_drift
 from river import tree, metrics
 from collections import deque
 from drift_runner.drift_strategies import *
 from feature_selection.alpha_investing import AlphaInvestingSelector
-
+import json
+import os
 
 class DriftDetectionRunner:
-    def __init__(self, generator, drift_detector,  feature_selector='boruta', boruta_samples=100, n_samples=10000, n_history=1000, print_warning=False, plot_path=None):
+    def __init__(self, generator, drift_detector,  feature_selector='boruta', boruta_samples=100, n_samples=10000, n_history=1000, print_warning=False, plot_path=None, export_path=None, print_plot=True):
         self.generator = generator
         self.drift_detector = drift_detector
         self.feature_selector_type = feature_selector
@@ -19,6 +20,8 @@ class DriftDetectionRunner:
         self.n_history = n_history
         self.print_warning = print_warning
         self.plot_path = plot_path
+        self.export_path = export_path
+        self.print_plot = print_plot
 
         self.model = tree.HoeffdingAdaptiveTreeClassifier()
         self.acc = metrics.Accuracy()
@@ -119,8 +122,12 @@ class DriftDetectionRunner:
             real_drift_points,
             self.detected_drift_points,
             self.regular_model_changes,
-            self.plot_path
+            self.plot_path,
+            self.print_plot
         )
+        
+        if self.export_path:
+            self.export_run_data(self.export_path)
 
     def run(self, mode='boruta_dynamic'):
         self.initialize_history()
@@ -138,3 +145,38 @@ class DriftDetectionRunner:
 
         decorated_run = mode_decorators[mode](type(self)._run).__get__(self, type(self))
         decorated_run()
+
+
+    def export_run_data(self, filepath):
+        detector_config = {
+            "feature_selector": self.feature_selector_type,
+            "drift_detector": type(self.drift_detector).__name__,
+            "boruta_samples": self.boruta_samples,
+            "n_samples": self.n_samples,
+            "n_history": self.n_history
+        }
+
+        generator_config = {
+            "n_features": getattr(self.generator, 'n_features', None),
+            "n_important_features": getattr(self.generator, 'n_important_features', None),
+            "importance_change_interval": getattr(self.generator, 'importance_change_interval', None)
+        }
+
+        results_data = {
+            "epochs": self.epochs,
+            "accuracies": self.accuracies,
+            "real_drift_points": (np.array(list(self.generator.importance_history.keys())) - 100).tolist(),
+            "detected_drift_points": self.detected_drift_points,
+            "regular_model_changes": self.regular_model_changes
+        }
+
+        data = {
+            "detector_runner": detector_config,
+            "generator": generator_config,
+            "results": results_data
+        }
+        
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=4)
+        print(f"Run data exported to {filepath}")
