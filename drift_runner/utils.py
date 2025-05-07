@@ -1,5 +1,7 @@
 from matplotlib import pyplot as plt
 import os
+import json 
+import matplotlib.cm as cm
 
 
 def plot_accuracy_with_drift(
@@ -55,3 +57,47 @@ def get_paths(chosen_detector, seed, n_history, strategy):
         export_path = f'./logs/{chosen_detector}/{seed}_seed/{strategy}.json'
     
     return plot_path, export_path
+
+
+def plot_all_strategies(detector, seed, window, strategies):
+
+    plt.figure(figsize=(14, 6))
+    real_drift_lines_added = False
+    
+    
+    # Generate a distinct color for each strategy
+    colors = cm.get_cmap('prism', len(strategies))  # 'Tab1', 'Set1'
+    
+    for col, strategy in enumerate(strategies):
+        # Choose path based on strategy type
+        if strategy in ['boruta_initial_only', 'boruta_dynamic', 'alpha_dynamic']:
+            path = f"logs/{detector}/{seed}_seed/{window}_window/{strategy}.json"
+        else:
+            path = f"logs/{detector}/{seed}_seed/{strategy}.json"
+
+        with open(path, "r") as f:
+            data = json.load(f)
+
+        results = data["results"]
+        epochs = results["epochs"]
+        accuracies = results["accuracies"]
+        real_drifts = results["real_drift_points"]
+        detected_drifts = results["detected_drift_points"]
+        model_changes = results.get("regular_model_changes", [])
+
+        color = colors(col)
+
+        # Plot accuracy line
+        plt.plot(epochs, accuracies, label=strategy, color=color)
+
+
+    # Labels and legend
+    plt.title(f"Accuracy Over Time for Different Feature Selection Strategies \n Detector: {detector}, Window: {window}")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.savefig(f'./plots_all_strategies/{detector}_{seed}seed_{window}window')
+    plt.show()
