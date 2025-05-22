@@ -70,7 +70,7 @@ def alpha_dynamic(func):
     return wrapper
 
 
-def oracle_drift(func):
+def oracle(func):
     def wrapper(self, *args, **kwargs):
         # Initial feature set from the generator's current state
         self.accepted_features = [f"var_{i}" for i in self.generator.important_features]

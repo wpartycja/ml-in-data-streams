@@ -11,13 +11,13 @@ import os
 from drift_runner.models import NoChangeModel, MajorityClassModel
 
 class DriftDetectionRunner:
-    def __init__(self, generator, drift_detector, sensitive_drift_detector, model_type='hoeffding', feature_selector=None, boruta_samples=100, n_samples=10000, print_warning=False, plot_path=None, export_path=None, print_plot=True):
+    def __init__(self, generator, drift_detector, sensitive_drift_detector, model_type='hoeffding', feature_selector=None, initial_samples=100, n_samples=10000, print_warning=False, plot_path=None, export_path=None, print_plot=True):
         self.generator = generator
         self.drift_detector = drift_detector
         self.sensitive_drift_detector = sensitive_drift_detector
         self.feature_selector_type = feature_selector
         self.alpha_selector = AlphaInvestingSelector() if feature_selector == 'alpha' else None
-        self.boruta_samples = boruta_samples
+        self.initial_samples = initial_samples
         self.n_samples = n_samples
         self.print_warning = print_warning
         self.plot_path = plot_path
@@ -54,7 +54,7 @@ class DriftDetectionRunner:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
 
     def initialize_history(self):
-        for x, y in self.generator.take(self.boruta_samples):
+        for x, y in self.generator.take(self.initial_samples):
             self.previous_xs.append(x)
             self.previous_ys.append(y)
 
@@ -110,6 +110,7 @@ class DriftDetectionRunner:
             return list(boruta_result.accepted) + list(boruta_result.tentative)
 
         elif self.feature_selector_type == 'alpha':
+            self.alpha_selector = AlphaInvestingSelector()
             self.alpha_selector.update(df_x, arr_y)
             return self.alpha_selector.get_selected_features()
 
@@ -120,7 +121,7 @@ class DriftDetectionRunner:
             raise ValueError(f"Unknown feature selector type: {self.feature_selector_type}")
 
     def _run(self):
-        for epoch, (x, y) in enumerate(self.generator.take(self.n_samples - self.boruta_samples)):
+        for epoch, (x, y) in enumerate(self.generator.take(self.n_samples - self.initial_samples)):
             self.iter = epoch  # <-- Add this line to keep track of stream position
 
             self.previous_xs.append(x)
@@ -135,8 +136,8 @@ class DriftDetectionRunner:
             y_pred = self._update_metrics(important_xs, y, epoch)
 
             if self.drift_detector is None and self.model_type == 'hoeffding':
-                if epoch+self.boruta_samples in self.generator.importance_history:
-                    self.handle_drift(epoch+self.boruta_samples)
+                if epoch+self.initial_samples in self.generator.importance_history:
+                    self.handle_drift(epoch+self.initial_samples)
 
             elif y_pred is not None and self._check_drift(y, y_pred, epoch):
                 self.handle_drift(epoch)
@@ -216,9 +217,9 @@ class DriftDetectionRunner:
                 f"[Error] Cannot use feature_selector='boruta' with mode='alpha_dynamic'"
             )
         
-        if self.feature_selector_type is not None and mode == 'oracle_drift':
+        if self.feature_selector_type is not None and mode == 'oracle':
             raise ValueError(
-                f"[Error] Cannot use feature_selector with mode='oracle_drift'"
+                f"[Error] Cannot use feature_selector with mode='oracle'"
             )
 
         self.initialize_history()
@@ -229,7 +230,7 @@ class DriftDetectionRunner:
             'boruta_initial_only': boruta_initial_only,
             'boruta_dynamic': boruta_dynamic,
             'alpha_dynamic': alpha_dynamic,
-            'oracle_drift': oracle_drift
+            'oracle': oracle
         }
 
         if mode not in mode_decorators:
@@ -242,7 +243,7 @@ class DriftDetectionRunner:
         detector_config = {
             "feature_selector": self.feature_selector_type,
             "drift_detector": type(self.drift_detector).__name__,
-            "boruta_samples": self.boruta_samples,
+            "boruta_samples": self.initial_samples,
             "n_samples": self.n_samples
         }
 
