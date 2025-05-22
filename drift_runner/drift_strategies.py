@@ -68,3 +68,21 @@ def alpha_dynamic(func):
         self.handle_drift = reset_model
         return func(self, *args, **kwargs)
     return wrapper
+
+
+def oracle_drift(func):
+    def wrapper(self, *args, **kwargs):
+        # Initial feature set from the generator's current state
+        self.accepted_features = [f"var_{i}" for i in self.generator.important_features]
+
+        def oracle_update(epoch):
+            print(f"[Oracle] Drift at epoch {epoch} → resetting model and applying oracle features")
+            current = max((t for t in self.generator.importance_history if t <= epoch), default=0)
+            important_features, _ = self.generator.importance_history[current]
+            self.accepted_features = [f"var_{i}" for i in important_features]
+            self._init_model()
+            self.detected_drift_points.append(epoch)
+
+        self.handle_drift = oracle_update
+        return func(self, *args, **kwargs)
+    return wrapper

@@ -11,7 +11,7 @@ import os
 from drift_runner.models import NoChangeModel, MajorityClassModel
 
 class DriftDetectionRunner:
-    def __init__(self, generator, drift_detector, sensitive_drift_detector, model_type='hoeffding', feature_selector='boruta', boruta_samples=100, n_samples=10000, print_warning=False, plot_path=None, export_path=None, print_plot=True):
+    def __init__(self, generator, drift_detector, sensitive_drift_detector, model_type='hoeffding', feature_selector=None, boruta_samples=100, n_samples=10000, print_warning=False, plot_path=None, export_path=None, print_plot=True):
         self.generator = generator
         self.drift_detector = drift_detector
         self.sensitive_drift_detector = sensitive_drift_detector
@@ -113,11 +113,16 @@ class DriftDetectionRunner:
             self.alpha_selector.update(df_x, arr_y)
             return self.alpha_selector.get_selected_features()
 
+        elif self.feature_selector_type is None:
+            return list(df_x.columns)  # Use all features
+
         else:
             raise ValueError(f"Unknown feature selector type: {self.feature_selector_type}")
 
     def _run(self):
         for epoch, (x, y) in enumerate(self.generator.take(self.n_samples - self.boruta_samples)):
+            self.iter = epoch  # <-- Add this line to keep track of stream position
+
             self.previous_xs.append(x)
             self.previous_ys.append(y)
 
@@ -126,14 +131,19 @@ class DriftDetectionRunner:
                 self.warning_data_ys.append(y)
 
             important_xs = self.get_features(x)
+            
             y_pred = self._update_metrics(important_xs, y, epoch)
 
-            if y_pred is not None and self._check_drift(y, y_pred, epoch):
+            if self.drift_detector is None and self.model_type == 'hoeffding':
+                if epoch+self.boruta_samples in self.generator.importance_history:
+                    self.handle_drift(epoch+self.boruta_samples)
+
+            elif y_pred is not None and self._check_drift(y, y_pred, epoch):
                 self.handle_drift(epoch)
 
             if epoch % 1000 == 0:
                 print(f"Epoch {epoch}, {self.acc}")
-        
+
         self._finalize()
     
     def handle_drift(self, epoch):
@@ -205,6 +215,11 @@ class DriftDetectionRunner:
             raise ValueError(
                 f"[Error] Cannot use feature_selector='boruta' with mode='alpha_dynamic'"
             )
+        
+        if self.feature_selector_type is not None and mode == 'oracle_drift':
+            raise ValueError(
+                f"[Error] Cannot use feature_selector with mode='oracle_drift'"
+            )
 
         self.initialize_history()
 
@@ -213,7 +228,8 @@ class DriftDetectionRunner:
             'all_features_with_reset': all_features_with_reset,
             'boruta_initial_only': boruta_initial_only,
             'boruta_dynamic': boruta_dynamic,
-            'alpha_dynamic': alpha_dynamic
+            'alpha_dynamic': alpha_dynamic,
+            'oracle_drift': oracle_drift
         }
 
         if mode not in mode_decorators:
