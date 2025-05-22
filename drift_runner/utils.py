@@ -5,7 +5,8 @@ import matplotlib.cm as cm
 
 
 def plot_accuracy_with_drift(
-    epochs, accuracies, real_drift_points, detected_drift_points, regular_change_points, save_path=None, print_plot=True
+    epochs, accuracies, real_drift_points, detected_drift_points, regular_change_points,
+    save_path=None, print_plot=True, sensitive_drift_points=None
 ):
     plt.figure(figsize=(10, 5))
     plt.plot(epochs, accuracies, label="Accuracy", color="blue")
@@ -31,6 +32,15 @@ def plot_accuracy_with_drift(
             linestyle="dashed",
             label="Drift Detected (Regular)" if i == 0 else "",
         )
+    
+    if sensitive_drift_points:
+        for i, drift in enumerate(sensitive_drift_points):
+            plt.axvline(
+                x=drift,
+                color="orange",
+                linestyle="dotted",
+                label="Sensitive Drift" if i == 0 else "",
+            )
 
     plt.xlabel("Epochs")
     plt.ylabel("Accuracy")

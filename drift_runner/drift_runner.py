@@ -10,18 +10,22 @@ import json
 import os
 
 class DriftDetectionRunner:
-    def __init__(self, generator, drift_detector,  feature_selector='boruta', boruta_samples=100, n_samples=10000, n_history=1000, print_warning=False, plot_path=None, export_path=None, print_plot=True):
+    def __init__(self, generator, drift_detector, sensitive_drift_detector, feature_selector='boruta', boruta_samples=100, n_samples=10000, print_warning=False, plot_path=None, export_path=None, print_plot=True):
         self.generator = generator
         self.drift_detector = drift_detector
+        self.sensitive_drift_detector = sensitive_drift_detector
         self.feature_selector_type = feature_selector
         self.alpha_selector = AlphaInvestingSelector() if feature_selector == 'alpha' else None
         self.boruta_samples = boruta_samples
         self.n_samples = n_samples
-        self.n_history = n_history
         self.print_warning = print_warning
         self.plot_path = plot_path
         self.export_path = export_path
         self.print_plot = print_plot
+        
+        self.warning_data_xs = deque()
+        self.warning_data_ys = deque()
+        self.collecting_warning_data = False
 
         self.model = tree.HoeffdingAdaptiveTreeClassifier()
         self.acc = metrics.Accuracy()
@@ -31,9 +35,10 @@ class DriftDetectionRunner:
         self.detected_drift_points = []
         self.regular_model_changes = []
         self.epochs = []
+        self.sensitive_drift_points = []
 
-        self.previous_xs = deque(maxlen=n_history)
-        self.previous_ys = deque(maxlen=n_history)
+        self.previous_xs = deque()
+        self.previous_ys = deque()
 
     def initialize_history(self):
         for x, y in self.generator.take(self.boruta_samples):
@@ -60,16 +65,27 @@ class DriftDetectionRunner:
 
     def _check_drift(self, y, y_pred, epoch):
         self.drift_detector.update(y == y_pred)
+
+        if self.sensitive_drift_detector:
+            self.sensitive_drift_detector.update(y == y_pred)
+            if self.sensitive_drift_detector.drift_detected and not self.collecting_warning_data:
+                print(f"[Sensitive] Simulated warning: sensitive ADWIN detected early drift at epoch {epoch}")
+                self.collecting_warning_data = True
+                self.warning_data_xs.clear()
+                self.warning_data_ys.clear()
+                self.sensitive_drift_points.append(epoch)
+
         drift_detected = self.drift_detector.drift_detected
-        warning_detected = getattr(self.drift_detector, "warning_detected", False)
-
-        if self.print_warning and warning_detected:
-            print(f"Warning detected at index {epoch}, input value: {y}")
-
         if drift_detected:
-            print(f"Drift detected at index {epoch}, input value: {y}")
+            print(f"[Main] Drift detected at index {epoch}")
+            if self.collecting_warning_data:
+                print(f"[Sensitive] Finalizing warning-phase collection. Epoch {epoch}")
+                self.previous_xs.extend(self.warning_data_xs)
+                self.previous_ys.extend(self.warning_data_ys)
+            self.collecting_warning_data = False
+            return True
 
-        return drift_detected
+        return False
 
 
     def _get_new_features(self):
@@ -92,25 +108,47 @@ class DriftDetectionRunner:
             self.previous_xs.append(x)
             self.previous_ys.append(y)
 
+            if self.collecting_warning_data:
+                self.warning_data_xs.append(x)
+                self.warning_data_ys.append(y)
+
             important_xs = self.get_features(x)
             y_pred = self._update_metrics(important_xs, y, epoch)
 
             if y_pred is not None and self._check_drift(y, y_pred, epoch):
                 self.handle_drift(epoch)
 
-            # Optional: track feature stability for mode D @TODO ????????????????????
-            elif self.accepted_features is not None and epoch % self.n_history == 0:
-                new_features = self._get_new_features()
-                if len(set(self.accepted_features).difference(new_features)) > len(self.accepted_features) / 2:
-                    print(f"Feature importance changed at epoch {epoch}.")
-                    self.accepted_features = new_features
-                    self.model = tree.HoeffdingTreeClassifier()
-                    self.regular_model_changes.append(epoch)
-
             if epoch % 1000 == 0:
                 print(f"Epoch {epoch}, {self.acc}")
-
+        
         self._finalize()
+    
+    def handle_drift(self, epoch):
+        self.detected_drift_points.append(epoch)
+        self.accepted_features = self._get_features_from_warning_data()
+        self.model = tree.HoeffdingTreeClassifier()
+        self.warning_data_xs.clear()
+        self.warning_data_ys.clear()
+        print(f"Drift handled at epoch {epoch}. Model and features updated.")
+    
+    def _get_features_from_warning_data(self):
+        if not self.warning_data_xs:
+            print("[Warning] No warning data available for feature selection.")
+            return self.accepted_features  # fallback to last known features
+
+        df_x = pd.DataFrame(self.warning_data_xs)
+        arr_y = np.array(self.warning_data_ys)
+
+        if self.feature_selector_type == 'boruta':
+            boruta_result = run_Boruta(df_x, arr_y)
+            return list(boruta_result.accepted) + list(boruta_result.tentative)
+
+        elif self.feature_selector_type == 'alpha':
+            self.alpha_selector.update(df_x, arr_y)
+            return self.alpha_selector.get_selected_features()
+
+        else:
+            raise ValueError(f"Unknown feature selector type: {self.feature_selector_type}")
 
     def _finalize(self):
         print('\n')
@@ -123,13 +161,21 @@ class DriftDetectionRunner:
             self.detected_drift_points,
             self.regular_model_changes,
             self.plot_path,
-            self.print_plot
+            self.print_plot,
+            self.sensitive_drift_points 
         )
         
         if self.export_path:
             self.export_run_data(self.export_path)
 
     def run(self, mode='boruta_dynamic'):
+        """
+        Supported Modes:
+        - 'all_features_no_reset': Use all features, no action on drift.
+        - 'all_features_with_reset': Use all features, reset model on drift.
+        - 'boruta_dynamic': Sensitive + main drift detection, use Boruta for feature selection on drift.
+        - 'alpha_dynamic': Use AlphaInvesting for online feature selection; reset model and update features on drift.
+        """
         self.initialize_history()
 
         mode_decorators = {
@@ -152,8 +198,7 @@ class DriftDetectionRunner:
             "feature_selector": self.feature_selector_type,
             "drift_detector": type(self.drift_detector).__name__,
             "boruta_samples": self.boruta_samples,
-            "n_samples": self.n_samples,
-            "n_history": self.n_history
+            "n_samples": self.n_samples
         }
 
         generator_config = {
