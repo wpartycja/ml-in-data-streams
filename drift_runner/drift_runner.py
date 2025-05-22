@@ -8,9 +8,10 @@ from drift_runner.drift_strategies import *
 from feature_selection.alpha_investing import AlphaInvestingSelector
 import json
 import os
+from drift_runner.models import NoChangeModel, MajorityClassModel
 
 class DriftDetectionRunner:
-    def __init__(self, generator, drift_detector, sensitive_drift_detector, feature_selector='boruta', boruta_samples=100, n_samples=10000, print_warning=False, plot_path=None, export_path=None, print_plot=True):
+    def __init__(self, generator, drift_detector, sensitive_drift_detector, model_type='hoeffding', feature_selector='boruta', boruta_samples=100, n_samples=10000, print_warning=False, plot_path=None, export_path=None, print_plot=True):
         self.generator = generator
         self.drift_detector = drift_detector
         self.sensitive_drift_detector = sensitive_drift_detector
@@ -23,11 +24,13 @@ class DriftDetectionRunner:
         self.export_path = export_path
         self.print_plot = print_plot
         
+        self.model_type = model_type
+        self._init_model()
+        
         self.warning_data_xs = deque()
         self.warning_data_ys = deque()
         self.collecting_warning_data = False
 
-        self.model = tree.HoeffdingAdaptiveTreeClassifier()
         self.acc = metrics.Accuracy()
         self.report = metrics.ClassificationReport()
 
@@ -39,6 +42,16 @@ class DriftDetectionRunner:
 
         self.previous_xs = deque()
         self.previous_ys = deque()
+
+    def _init_model(self):
+        if self.model_type == 'hoeffding':
+            self.model = tree.HoeffdingAdaptiveTreeClassifier()
+        elif self.model_type == 'majority':
+            self.model = MajorityClassModel()
+        elif self.model_type == 'no_change':
+            self.model = NoChangeModel()
+        else:
+            raise ValueError(f"Unsupported model_type: {self.model_type}")
 
     def initialize_history(self):
         for x, y in self.generator.take(self.boruta_samples):
@@ -69,7 +82,7 @@ class DriftDetectionRunner:
         if self.sensitive_drift_detector:
             self.sensitive_drift_detector.update(y == y_pred)
             if self.sensitive_drift_detector.drift_detected and not self.collecting_warning_data:
-                print(f"[Sensitive] Simulated warning: sensitive ADWIN detected early drift at epoch {epoch}")
+                print(f"[Sensitive] Simulated warning: sensitive drift detector detected early drift at epoch {epoch}")
                 self.collecting_warning_data = True
                 self.warning_data_xs.clear()
                 self.warning_data_ys.clear()
@@ -126,7 +139,7 @@ class DriftDetectionRunner:
     def handle_drift(self, epoch):
         self.detected_drift_points.append(epoch)
         self.accepted_features = self._get_features_from_warning_data()
-        self.model = tree.HoeffdingTreeClassifier()
+        self._init_model()
         self.warning_data_xs.clear()
         self.warning_data_ys.clear()
         print(f"Drift handled at epoch {epoch}. Model and features updated.")
@@ -176,6 +189,23 @@ class DriftDetectionRunner:
         - 'boruta_dynamic': Sensitive + main drift detection, use Boruta for feature selection on drift.
         - 'alpha_dynamic': Use AlphaInvesting for online feature selection; reset model and update features on drift.
         """
+
+        # Override mode if using a baseline model
+        if self.model_type in ['majority', 'no_change']:
+            print(f"[Info] Overriding mode to 'all_features_no_reset' for baseline model '{self.model_type}'")
+            mode = 'all_features_no_reset'
+        
+        # Force mode to alpha_dynamic if using AlphaInvesting
+        if self.feature_selector_type == 'alpha' and mode != 'alpha_dynamic':
+            raise ValueError(
+                f"[Error] feature_selector='alpha' requires mode='alpha_dynamic', got mode='{mode}'"
+        )
+            
+        if self.feature_selector_type == 'boruta' and mode == 'alpha_dynamic':
+            raise ValueError(
+                f"[Error] Cannot use feature_selector='boruta' with mode='alpha_dynamic'"
+            )
+
         self.initialize_history()
 
         mode_decorators = {
@@ -191,7 +221,6 @@ class DriftDetectionRunner:
 
         decorated_run = mode_decorators[mode](type(self)._run).__get__(self, type(self))
         decorated_run()
-
 
     def export_run_data(self, filepath):
         detector_config = {
