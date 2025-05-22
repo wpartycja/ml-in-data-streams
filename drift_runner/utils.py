@@ -58,10 +58,10 @@ def plot_accuracy_with_drift(
     plt.close()
 
 
-def get_paths(chosen_detector, seed, n_history, strategy):
+def get_paths(chosen_detector, seed, window, strategy):
     if strategy in ['boruta_initial_only', 'boruta_dynamic', 'alpha_dynamic']:
-        plot_path = f'./plots/{chosen_detector}/{seed}_seed/{n_history}_window/{strategy}.png'
-        export_path = f'./logs/{chosen_detector}/{seed}_seed/{n_history}_window/{strategy}.json'
+        plot_path = f'./plots/{chosen_detector}/{seed}_seed/{window}_window/{strategy}.png'
+        export_path = f'./logs/{chosen_detector}/{seed}_seed/{window}_window/{strategy}.json'
     else:
         plot_path = f'./plots/{chosen_detector}/{seed}_seed/{strategy}.png'
         export_path = f'./logs/{chosen_detector}/{seed}_seed/{strategy}.json'
@@ -72,16 +72,24 @@ def get_paths(chosen_detector, seed, n_history, strategy):
 def plot_all_strategies(detector, seed, window, strategies):
 
     plt.figure(figsize=(14, 6))
-    real_drift_lines_added = False
-    
     
     # Generate a distinct color for each strategy
-    colors = cm.get_cmap('prism', len(strategies))  # 'Tab1', 'Set1'
+    
+    custom_colors = {
+        'boruta_initial_only': '#1f77b4', 
+        'boruta_dynamic': '#ff7f0e',       
+        'alpha_dynamic': '#2ca02c',       
+        'oracle': "#be1313",               
+        'all_features_no_reset': "#781cce",
+        'all_features_with_reset': "#f73edb"
+    }
     
     for col, strategy in enumerate(strategies):
         # Choose path based on strategy type
         if strategy in ['boruta_initial_only', 'boruta_dynamic', 'alpha_dynamic']:
             path = f"logs/{detector}/{seed}_seed/{window}_window/{strategy}.json"
+        elif strategy == 'oracle':
+            path = f"logs/None/{seed}_seed/{strategy}.json"
         else:
             path = f"logs/{detector}/{seed}_seed/{strategy}.json"
 
@@ -95,7 +103,7 @@ def plot_all_strategies(detector, seed, window, strategies):
         detected_drifts = results["detected_drift_points"]
         model_changes = results.get("regular_model_changes", [])
 
-        color = colors(col)
+        color = custom_colors.get(strategy, 'black') 
 
         # Plot accuracy line
         plt.plot(epochs, accuracies, label=strategy, color=color)

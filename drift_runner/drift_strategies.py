@@ -72,17 +72,28 @@ def alpha_dynamic(func):
 
 def oracle(func):
     def wrapper(self, *args, **kwargs):
-        # Initial feature set from the generator's current state
-        self.accepted_features = [f"var_{i}" for i in self.generator.important_features]
-
         def oracle_update(epoch):
             print(f"[Oracle] Drift at epoch {epoch} → resetting model and applying oracle features")
-            current = max((t for t in self.generator.importance_history if t <= epoch), default=0)
+            valid_points = [t for t in self.generator.importance_history if t <= epoch]
+            if not valid_points:
+                earliest = min(self.generator.importance_history)
+                print(f"[Oracle] No drift <= {epoch}, falling back to earliest: {earliest}")
+                current = earliest
+            else:
+                current = max(valid_points)
+
             important_features, _ = self.generator.importance_history[current]
             self.accepted_features = [f"var_{i}" for i in important_features]
             self._init_model()
             self.detected_drift_points.append(epoch)
 
         self.handle_drift = oracle_update
+
+        if self.generator.importance_history:
+            first = min(self.generator.importance_history)
+            oracle_update(first)
+        else:
+            raise ValueError("importance_history is empty. Generator hasn't recorded any feature changes yet.")
+
         return func(self, *args, **kwargs)
     return wrapper
